@@ -36,11 +36,20 @@ impl SystemReporter {
 		info!("reporting states...");
 		let topic = format!("{}/{}/state", self.config.program_name, self.config.client_id);
 
+		let mut refresh_count = 0u32;
+
 		loop {
 			if let Some(entry) = self.store.get_latest() {
 				self.broker.publish(&topic, entry.report.to_string());
 			}
 
+			// Every 100 refreshes, reregister the sensors
+			// this has been an issue with Home Assistant losing the sensor configs
+			if refresh_count % 100 == 0 && refresh_count != 0 {
+				self.register();
+			}
+
+			refresh_count += 1;
 			thread::sleep(Duration::from_secs(self.config.report_interval));
 		}
 	}
