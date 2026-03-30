@@ -3,6 +3,7 @@ use crate::{
 	info,
 	models::{ByteInfo, SystemReport},
 	repository::memory::SystemReportStore,
+	services::gpu_monitor::GpuMonitor,
 	utils::{format_bytes, format_rate},
 };
 use std::time::Instant;
@@ -20,6 +21,7 @@ pub struct SystemMonitor {
 	last_network_check: Instant,
 	last_received: u64,
 	last_transmitted: u64,
+	gpu_monitor: GpuMonitor,
 }
 
 impl SystemMonitor {
@@ -51,11 +53,16 @@ impl SystemMonitor {
 			last_network_check: Instant::now(),
 			last_received: initial_received,
 			last_transmitted: initial_transmitted,
+			gpu_monitor: GpuMonitor::new(),
 		}
 	}
 
 	pub fn check_support(&self) -> bool {
 		sysinfo::IS_SUPPORTED_SYSTEM
+	}
+
+	pub fn gpu_vendor(&self) -> Option<String> {
+		self.gpu_monitor.detect().map(|g| g.vendor)
 	}
 
 	pub fn ram_usage(&mut self) -> u64 {
@@ -144,6 +151,18 @@ impl SystemMonitor {
 				let disk_info = self.disk_usage();
 				let cpu_usage = self.cpu_usage();
 				let network_info = self.network_usage();
+				let gpu_info = self.gpu_monitor.detect();
+
+				let (gpu_vendor, gpu_mem_used, gpu_mem_total, gpu_usage) =
+					if let Some(gpu) = gpu_info {
+						let used =
+							gpu.used_mem.map(|m| format_bytes(m, self.config.memory_unit.clone()));
+						let total =
+							gpu.total_mem.map(|m| format_bytes(m, self.config.memory_unit.clone()));
+						(Some(gpu.vendor), used, total, gpu.utilization)
+					} else {
+						(None, None, None, None)
+					};
 
 				let report = SystemReport {
 					ram_total: info.total_memory.clone(),
@@ -159,6 +178,10 @@ impl SystemMonitor {
 						network_info.transmitted,
 						self.config.network_unit.clone(),
 					),
+					gpu_vendor,
+					gpu_mem_used,
+					gpu_mem_total,
+					gpu_usage,
 				};
 
 				self.store.update(report);

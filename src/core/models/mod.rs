@@ -9,12 +9,15 @@ pub struct SystemReport {
 	pub cpu_usage: String,
 	pub network_received: ByteInfo,
 	pub network_transmitted: ByteInfo,
+	pub gpu_vendor: Option<String>,
+	pub gpu_mem_used: Option<ByteInfo>,
+	pub gpu_mem_total: Option<ByteInfo>,
+	pub gpu_usage: Option<f64>,
 }
 
 impl fmt::Display for SystemReport {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(
-			f,
+		let mut json = format!(
 			r#"{{
 "ram_total": {:.prec_ram_total$},
 "ram_usage": {:.prec_ram_usage$},
@@ -22,8 +25,7 @@ impl fmt::Display for SystemReport {
 "disk_usage": {:.prec_disk_usage$},
 "cpu_usage": {},
 "network_received": {:.prec_network_received$},
-"network_transmitted": {:.prec_network_transmitted$}
-}}"#,
+"network_transmitted": {:.prec_network_transmitted$}"#,
 			self.ram_total.value,
 			self.ram_usage.value,
 			self.disk_total.value,
@@ -37,7 +39,25 @@ impl fmt::Display for SystemReport {
 			prec_disk_usage = self.disk_usage.precision,
 			prec_network_received = self.network_received.precision,
 			prec_network_transmitted = self.network_transmitted.precision,
-		)
+		);
+
+		if let Some(ref vendor) = self.gpu_vendor {
+			json.push_str(&format!(r#","gpu_vendor": "{}""#, vendor));
+		}
+		if let (Some(used), Some(total)) = (&self.gpu_mem_used, &self.gpu_mem_total) {
+			json.push_str(&format!(
+				r#","gpu_mem_used": {:.prec$},"gpu_mem_total": {:.prec$}"#,
+				used.value,
+				total.value,
+				prec = used.precision,
+			));
+		}
+		if let Some(gpu_usage) = self.gpu_usage {
+			json.push_str(&format!(r#","gpu_usage": {:.1}"#, gpu_usage));
+		}
+
+		json.push_str("\n}");
+		write!(f, "{}", json)
 	}
 }
 

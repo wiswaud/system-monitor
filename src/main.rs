@@ -34,7 +34,8 @@ async fn main() -> Result<()> {
 
 	match result {
 		Ok(_) => {
-			let reporter = SystemReporter::new(config, store, broker);
+			let gpu_vendor = monitor.gpu_vendor();
+			let reporter = SystemReporter::new(config, store, broker, gpu_vendor);
 
 			monitor.run();
 

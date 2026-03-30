@@ -18,6 +18,9 @@ dashmap = "6.1.0"
 # System information
 sysinfo = "0.35.2"
 
+# NVIDIA GPU monitoring (dynamically loaded at runtime, fails gracefully if NVML not present)
+nvml-wrapper = "0.12.1"
+
 # Error handling
 thiserror = "2.0.12"
 
