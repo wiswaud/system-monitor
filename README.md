@@ -7,6 +7,7 @@ A lightweight Rust-based system resource monitor that reports metrics to Home As
 ## Overview
 
 This project monitors system resources (CPU, memory, disk usage, network usage) and publishes the data over MQTT for integration with Home Assistant. Written in Rust for efficiency and reliability, it provides real-time system metrics for your home automation setup.
+If an AMD, NVIDIA or Intel GPU is present, it will also push metrics for it.
 
 ## Features
 
