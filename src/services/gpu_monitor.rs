@@ -2,6 +2,15 @@ use nvml_wrapper::Nvml;
 use std::fs;
 use std::path::Path;
 
+// PCI vendor IDs for virtual/hypervisor display adapters that must never be
+// reported as real GPUs.
+const VIRTUAL_VENDOR_IDS: &[&str] = &[
+	"0x1af4", // VirtIO / Red Hat (QEMU virtio-gpu)
+	"0x1234", // QEMU standard VGA
+	"0x15ad", // VMware SVGA
+	"0x80ee", // VirtualBox Graphics Adapter
+];
+
 #[derive(Debug, Clone)]
 pub struct GpuInfo {
 	pub vendor: String,
@@ -46,21 +55,40 @@ impl GpuMonitor {
 		})
 	}
 
-	fn detect_amd() -> Option<GpuInfo> {
-		let drm_path = Path::new("/sys/class/drm");
-		let dir = fs::read_dir(drm_path).ok()?;
+	/// Returns `true` for virtual/hypervisor display adapter vendor IDs that
+	/// must never be treated as real GPUs.
+	fn is_virtual_vendor(vendor: &str) -> bool {
+		VIRTUAL_VENDOR_IDS.contains(&vendor)
+	}
 
-		for entry in dir {
-			let entry = match entry {
-				Ok(e) => e,
-				Err(_) => continue,
-			};
-			let path = entry.path();
+	/// Iterates `/sys/class/drm` and yields only the paths of `cardN` entries
+	/// (skipping render nodes such as `renderD128` and other non-card entries).
+	fn drm_card_paths() -> Vec<std::path::PathBuf> {
+		let Ok(dir) = fs::read_dir("/sys/class/drm") else {
+			return Vec::new();
+		};
+		dir.filter_map(|e| e.ok())
+			.filter(|e| {
+				e.file_name()
+					.to_str()
+					.map(|n| {
+						n.starts_with("card")
+							&& n.chars().nth(4).map_or(false, |c| c.is_ascii_digit())
+					})
+					.unwrap_or(false)
+			})
+			.map(|e| e.path())
+			.collect()
+	}
+
+	fn detect_amd() -> Option<GpuInfo> {
+		for path in Self::drm_card_paths() {
 			let vendor = match fs::read_to_string(path.join("device/vendor")) {
 				Ok(v) => v,
 				Err(_) => continue,
 			};
-			if vendor.trim() != "0x1002" {
+			let vendor = vendor.trim();
+			if Self::is_virtual_vendor(vendor) || vendor != "0x1002" {
 				continue;
 			}
 
@@ -85,20 +113,13 @@ impl GpuMonitor {
 	}
 
 	fn detect_intel() -> Option<GpuInfo> {
-		let drm_path = Path::new("/sys/class/drm");
-		let dir = fs::read_dir(drm_path).ok()?;
-
-		for entry in dir {
-			let entry = match entry {
-				Ok(e) => e,
-				Err(_) => continue,
-			};
-			let path = entry.path();
+		for path in Self::drm_card_paths() {
 			let vendor = match fs::read_to_string(path.join("device/vendor")) {
 				Ok(v) => v,
 				Err(_) => continue,
 			};
-			if vendor.trim() != "0x8086" {
+			let vendor = vendor.trim();
+			if Self::is_virtual_vendor(vendor) || vendor != "0x8086" {
 				continue;
 			}
 
