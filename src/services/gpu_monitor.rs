@@ -2,15 +2,6 @@ use nvml_wrapper::Nvml;
 use std::fs;
 use std::path::Path;
 
-// PCI vendor IDs for virtual/hypervisor display adapters that must never be
-// reported as real GPUs.
-const VIRTUAL_VENDOR_IDS: &[&str] = &[
-	"0x1af4", // VirtIO / Red Hat (QEMU virtio-gpu)
-	"0x1234", // QEMU standard VGA
-	"0x15ad", // VMware SVGA
-	"0x80ee", // VirtualBox Graphics Adapter
-];
-
 #[derive(Debug, Clone)]
 pub struct GpuInfo {
 	pub vendor: String,
@@ -55,12 +46,6 @@ impl GpuMonitor {
 		})
 	}
 
-	/// Returns `true` for virtual/hypervisor display adapter vendor IDs that
-	/// must never be treated as real GPUs.
-	fn is_virtual_vendor(vendor: &str) -> bool {
-		VIRTUAL_VENDOR_IDS.contains(&vendor)
-	}
-
 	/// Iterates `/sys/class/drm` and yields only the paths of `cardN` entries
 	/// (skipping render nodes such as `renderD128` and other non-card entries).
 	fn drm_card_paths() -> Vec<std::path::PathBuf> {
@@ -88,7 +73,7 @@ impl GpuMonitor {
 				Err(_) => continue,
 			};
 			let vendor = vendor.trim();
-			if Self::is_virtual_vendor(vendor) || vendor != "0x1002" {
+			if vendor != "0x1002" {
 				continue;
 			}
 
@@ -119,7 +104,7 @@ impl GpuMonitor {
 				Err(_) => continue,
 			};
 			let vendor = vendor.trim();
-			if Self::is_virtual_vendor(vendor) || vendor != "0x8086" {
+			if vendor != "0x8086" {
 				continue;
 			}
 
