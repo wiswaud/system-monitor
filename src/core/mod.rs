@@ -5,7 +5,7 @@ use std::{thread, time::Duration};
 
 pub mod models;
 
-const SUPPORTED_SENSORS: &[&str] = &[
+const BASE_SENSORS: &[&str] = &[
 	"ram_total",
 	"ram_usage",
 	"disk_total",
@@ -15,6 +15,11 @@ const SUPPORTED_SENSORS: &[&str] = &[
 	"network_transmitted",
 ];
 
+const GPU_SENSORS: &[&str] = &["gpu_vendor", "gpu_mem_used", "gpu_mem_total", "gpu_usage"];
+
+const PERCENT_SENSORS: &[&str] = &["cpu_usage", "gpu_usage"];
+const RATE_SENSORS: &[&str] = &["network_received", "network_transmitted"];
+
 pub struct SystemReporter {
 	config: Config,
 	store: SystemReportStore,
@@ -23,12 +28,21 @@ pub struct SystemReporter {
 }
 
 impl SystemReporter {
-	pub fn new(config: Config, store: SystemReportStore, broker: Broker) -> Self {
+	pub fn new(
+		config: Config,
+		store: SystemReportStore,
+		broker: Broker,
+		gpu_vendor: Option<String>,
+	) -> Self {
+		let mut sensors: Vec<String> = BASE_SENSORS.iter().map(|s| s.to_string()).collect();
+		if gpu_vendor.is_some() {
+			sensors.extend(GPU_SENSORS.iter().map(|s| s.to_string()));
+		}
 		Self {
 			config,
 			store,
 			broker,
-			sensors: SUPPORTED_SENSORS.iter().map(|s| s.to_string()).collect(),
+			sensors,
 		}
 	}
 
@@ -70,7 +84,7 @@ impl SystemReporter {
 			let unique_id = format!("{}_{}", self.config.client_id, sensor);
 
 			let value_template = format!("{{{{ value_json.{} }}}}", sensor);
-			let config = if sensor == "cpu_usage" {
+			let config = if PERCENT_SENSORS.contains(&sensor.as_str()) {
 				serde_json::json!({
 					"state_topic": topic,
 					"unit_of_measurement": "%",
@@ -85,7 +99,7 @@ impl SystemReporter {
 						"model": model_id,
 					}
 				})
-			} else if sensor == "network_received" || sensor == "network_transmitted" {
+			} else if RATE_SENSORS.contains(&sensor.as_str()) {
 				serde_json::json!({
 					"device_class": "data_rate",
 					"state_topic": topic,
@@ -101,8 +115,21 @@ impl SystemReporter {
 						"model": model_id,
 					}
 				})
+			} else if sensor == "gpu_vendor" {
+				serde_json::json!({
+					"state_topic": topic,
+					"value_template": value_template,
+					"unique_id": unique_id,
+					"name": sensor.replace("_", " "),
+					"device": {
+						"name": device_name,
+						"identifiers": [model_id],
+						"manufacturer": self.config.program_name,
+						"model": model_id,
+					}
+				})
 			} else {
-				let unit = if sensor.contains("ram") {
+				let unit = if sensor.contains("ram") || sensor.starts_with("gpu_mem") {
 					self.config.memory_unit.to_string()
 				} else {
 					self.config.storage_unit.to_string()
