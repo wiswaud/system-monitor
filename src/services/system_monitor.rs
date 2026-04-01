@@ -73,15 +73,31 @@ impl SystemMonitor {
 	pub fn disk_usage(&mut self) -> DiskInfo {
 		let disks = Disks::new_with_refreshed_list();
 
-		let mut unique_disks = std::collections::HashMap::new();
+		// For ZFS, each dataset in a pool reports the whole pool's size, so we
+		// deduplicate by pool name (the first path component of the dataset name)
+		// to avoid counting the same pool multiple times.  For all other
+		// filesystems we keep the original deduplication-by-total-size approach.
+		let mut seen_zfs_pools = std::collections::HashSet::new();
+		let mut unique_non_zfs = std::collections::HashMap::new();
+		let mut zfs_pool_reps: Vec<&sysinfo::Disk> = Vec::new();
+
 		for disk in &disks {
-			unique_disks.insert(disk.total_space(), disk);
+			if disk.file_system().to_string_lossy().to_ascii_lowercase() == "zfs" {
+				let name = disk.name().to_string_lossy();
+				let pool_name = name.split('/').next().unwrap_or(name.as_ref()).to_string();
+				if seen_zfs_pools.insert(pool_name) {
+					zfs_pool_reps.push(disk);
+				}
+			} else {
+				unique_non_zfs.insert(disk.total_space(), disk);
+			}
 		}
 
-		let total_space: u64 = unique_disks.values().map(|disk| disk.total_space()).sum();
+		let unique_disks = unique_non_zfs.values().copied().chain(zfs_pool_reps.iter().copied());
 
+		let total_space: u64 = unique_disks.clone().map(|disk| disk.total_space()).sum();
 		let used_space: u64 =
-			unique_disks.values().map(|disk| disk.total_space() - disk.available_space()).sum();
+			unique_disks.map(|disk| disk.total_space() - disk.available_space()).sum();
 
 		DiskInfo {
 			total: total_space,
