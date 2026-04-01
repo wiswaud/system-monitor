@@ -1,6 +1,7 @@
 use crate::{
 	config::Config,
 	info,
+	warn,
 	models::{ByteInfo, SystemReport},
 	repository::memory::SystemReportStore,
 	services::gpu_monitor::GpuMonitor,
@@ -12,6 +13,7 @@ use std::{
 	time::Duration,
 };
 use sysinfo::{Disks, Networks, System};
+use std::process::Command;
 
 pub struct SystemMonitor {
 	system: System,
@@ -73,19 +75,27 @@ impl SystemMonitor {
 	pub fn disk_usage(&mut self) -> DiskInfo {
 		let disks = Disks::new_with_refreshed_list();
 
-		let mut unique_disks = std::collections::HashMap::new();
+		// Skip ZFS disks entirely — sysinfo exposes ZFS datasets, not zpools.
+		// Dataset-level values are unreliable (each dataset without a quota
+		// reports the full pool size, and available/used are per-dataset).
+		// ZFS capacity is obtained separately via `zpool list`.
+		let mut unique_non_zfs = std::collections::HashMap::new();
 		for disk in &disks {
-			unique_disks.insert(disk.total_space(), disk);
+			if disk.file_system().to_string_lossy().to_ascii_lowercase() != "zfs" {
+				unique_non_zfs.insert(disk.total_space(), disk);
+			}
 		}
 
-		let total_space: u64 = unique_disks.values().map(|disk| disk.total_space()).sum();
+		let non_zfs_total: u64 =
+			unique_non_zfs.values().map(|disk| disk.total_space()).sum();
+		let non_zfs_used: u64 =
+			unique_non_zfs.values().map(|disk| disk.total_space() - disk.available_space()).sum();
 
-		let used_space: u64 =
-			unique_disks.values().map(|disk| disk.total_space() - disk.available_space()).sum();
+		let (zfs_total, zfs_used) = zpool_usage();
 
 		DiskInfo {
-			total: total_space,
-			used: used_space,
+			total: non_zfs_total + zfs_total,
+			used: non_zfs_used + zfs_used,
 		}
 	}
 
@@ -189,6 +199,48 @@ impl SystemMonitor {
 				sleep(Duration::from_secs(self.config.report_interval));
 			}
 		})
+	}
+}
+
+// Query zpools using `zpool list -Hp` which outputs raw bytes (no headers,
+// tab-separated).  Column layout: NAME SIZE ALLOC FREE ...
+// Returns (total_bytes, used_bytes) summed across all pools, or (0, 0) if
+// zpool is not installed or fails.
+fn zpool_usage() -> (u64, u64) {
+	let output = Command::new("zpool").args(["list", "-Hp"]).output();
+	match output {
+		Ok(out) if out.status.success() => {
+			let stdout = String::from_utf8_lossy(&out.stdout);
+			let mut total = 0u64;
+			let mut used = 0u64;
+			for line in stdout.lines() {
+				let parts: Vec<&str> = line.split('\t').collect();
+				if parts.len() >= 3 {
+					match (parts[1].parse::<u64>(), parts[2].parse::<u64>()) {
+						(Ok(size), Ok(alloc)) => {
+							total += size;
+							used += alloc;
+						}
+						_ => {
+							warn!("zpool: could not parse SIZE/ALLOC for line: {}", line);
+						}
+					}
+				}
+			}
+			(total, used)
+		}
+		Ok(out) => {
+			warn!(
+				"zpool list failed (exit {}): {}",
+				out.status,
+				String::from_utf8_lossy(&out.stderr).trim()
+			);
+			(0, 0)
+		}
+		Err(err) => {
+			warn!("zpool not available: {}", err);
+			(0, 0)
+		}
 	}
 }
 
